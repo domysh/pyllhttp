@@ -27,10 +27,10 @@ HTTP_METHOD_MAP(HTTP_METHOD_GEN)
 #undef HTTP_METHOD_GEN
 };
 
-
+/* New public callback helper that uses method names as C strings */
 static int
-parser_callback(_Py_Identifier *type, llhttp_t *llhttp) {
-    PyObject *result = _PyObject_CallMethodIdObjArgs(llhttp->data, type, NULL);
+parser_callback(const char *name, llhttp_t *llhttp) {
+    PyObject *result = PyObject_CallMethod(llhttp->data, name, NULL);
     if (result)
         Py_DECREF(result);
 
@@ -51,9 +51,11 @@ parser_callback(_Py_Identifier *type, llhttp_t *llhttp) {
 }
 
 static int
-parser_data_callback(_Py_Identifier *type, llhttp_t *llhttp, const char *data, size_t length) {
+parser_data_callback(const char *name, llhttp_t *llhttp, const char *data, size_t length) {
     PyObject *payload = PyMemoryView_FromMemory((char*)data, length, PyBUF_READ);
-    PyObject *result = _PyObject_CallMethodIdObjArgs(llhttp->data, type, payload, NULL);
+    if (!payload)
+        return HPE_USER;
+    PyObject *result = PyObject_CallMethod(llhttp->data, name, "O", payload);
     Py_DECREF(payload);
     if (result)
         Py_DECREF(result);
@@ -74,15 +76,16 @@ parser_data_callback(_Py_Identifier *type, llhttp_t *llhttp, const char *data, s
     return HPE_OK;
 }
 
+/* Macros now simply pass the name as a string literal */
 #define PARSER_CALLBACK(type) \
-_Py_IDENTIFIER(type); \
-static int parser_ ## type (llhttp_t *llhttp) \
-    { return parser_callback(&PyId_ ## type, llhttp); }
+static int parser_ ## type (llhttp_t *llhttp) { \
+    return parser_callback(#type, llhttp); \
+}
 
 #define PARSER_DATA_CALLBACK(type) \
-_Py_IDENTIFIER(type); \
-static int parser_ ## type (llhttp_t *llhttp, const char *data, size_t length) \
-    { return parser_data_callback(&PyId_ ## type, llhttp, data, length); }
+static int parser_ ## type (llhttp_t *llhttp, const char *data, size_t length) { \
+    return parser_data_callback(#type, llhttp, data, length); \
+}
 
 PARSER_CALLBACK(on_message_begin)
 PARSER_DATA_CALLBACK(on_url)
@@ -540,4 +543,3 @@ fail:
     return NULL;
 }
 
-//
