@@ -1,10 +1,10 @@
 #!/bin/env python3
-import llhttp
+import pyllhttp
 from pprint import pprint
 
-pprint({"version": llhttp.version})
+pprint({"version": pyllhttp.version})
 
-class request_parser(llhttp.Request):
+class request_parser(pyllhttp.Request):
     headers = {}
 
     url = b''

@@ -6,11 +6,11 @@ with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 setup(
-    name = 'llhttp',
+    name = 'pyllhttp',
     version = '6.7.0',
     description = ("llhttp in python"),
-    url = "http://github.com/pallas/pyllhttp",
-    author = "Derrick Lyndon Pallas",
+    url = "http://github.com/domysh/pyllhttp",
+    author = "Derrick Lyndon Pallas, Domingo Dirutigliano",
     author_email = "derrick@pallas.us",
     license = "MIT",
     long_description = long_description,
@@ -25,9 +25,9 @@ setup(
         "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
         "License :: OSI Approved :: MIT License",
     ],
-    packages = [ "llhttp" ],
+    packages = [ "pyllhttp" ],
     headers = [ "lib/llhttp.h", "lib/api.h" ],
-    ext_modules = [ Extension('__llhttp',
+    ext_modules = [ Extension('__pyllhttp',
         sources = """
             pyllhttp.c
             lib/llhttp.c

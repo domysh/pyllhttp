@@ -22,7 +22,7 @@ typedef struct{
 } error_info;
 
 static error_info errors[] = {
-    #define HTTP_ERRNO_GEN(CODE, NAME, _) {CODE, #NAME, "llhttp." #NAME "_Error", NULL},
+    #define HTTP_ERRNO_GEN(CODE, NAME, _) {CODE, #NAME, "pyllhttp." #NAME "_Error", NULL},
     HTTP_ERRNO_MAP(HTTP_ERRNO_GEN)
     #undef HTTP_ERRNO_GEN
 };
@@ -146,7 +146,7 @@ static PyObject *response_new(PyTypeObject *type, PyObject *args, PyObject *kwds
 void set_related_exception(llhttp_errno_t eno, llhttp_t *llhttp) {
     for( size_t i = 0; i < sizeof(errors)/sizeof(errors[0]); ++i) {
         if (errors[i].code == eno) {
-            PyObject *module = PyImport_ImportModule("llhttp");
+            PyObject *module = PyImport_ImportModule("pyllhttp");
             if (!module) {
                 PyErr_Print();
                 return;
@@ -435,7 +435,7 @@ static PyType_Slot request_slots[] = {
 };
 
 static PyType_Spec request_spec = {
-    "llhttp.Request",
+    "pyllhttp.Request",
     sizeof(llhttp_obj_t),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
@@ -452,7 +452,7 @@ static PyType_Slot response_slots[] = {
 };
 
 static PyType_Spec response_spec = {
-    "llhttp.Response",
+    "pyllhttp.Response",
     sizeof(llhttp_obj_t),
     0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     response_slots,
@@ -464,9 +464,9 @@ static void snake_to_camel(error_info * err_obj) {
     }
     err_obj->module_name = malloc(strlen(err_obj->pyname)+1);
     bool upper = true;
-    char * string = err_obj->pyname+strlen("llhttp.");
-    memcpy(err_obj->module_name, "llhttp.", strlen("llhttp."));
-    char * camel = err_obj->module_name+strlen("llhttp.");
+    char * string = err_obj->pyname+strlen("pyllhttp.");
+    memcpy(err_obj->module_name, "pyllhttp.", strlen("pyllhttp."));
+    char * camel = err_obj->module_name+strlen("pyllhttp.");
     for (const char * snake = string ; *snake ; ++snake) {
         if (isalpha(*snake)) {
             *camel++ = upper ? toupper(*snake) : tolower(*snake);
@@ -484,7 +484,7 @@ static int init_llhttp_module(PyObject *m) {
         goto fail;
     
     PyObject *base_error = NULL;
-    if ((base_error = PyErr_NewException("llhttp.Error", NULL, NULL))) {
+    if ((base_error = PyErr_NewException("pyllhttp.Error", NULL, NULL))) {
         Py_INCREF(base_error);
         PyModule_AddObject(m, "Error", base_error);
     
@@ -508,7 +508,7 @@ static int init_llhttp_module(PyObject *m) {
     if (!request_type)
         goto fail;
 
-    if (PyModule_AddObject(m, request_spec.name + strlen("llhttp."), request_type)) {
+    if (PyModule_AddObject(m, request_spec.name + strlen("pyllhttp."), request_type)) {
         Py_DECREF(request_type);
         goto fail;
     }
@@ -517,7 +517,7 @@ static int init_llhttp_module(PyObject *m) {
     if (!response_type)
         goto fail;
 
-    if (PyModule_AddObject(m, response_spec.name + strlen("llhttp."), response_type)) {
+    if (PyModule_AddObject(m, response_spec.name + strlen("pyllhttp."), response_type)) {
         Py_DECREF(response_type);
         goto fail;
     }
@@ -526,7 +526,7 @@ static int init_llhttp_module(PyObject *m) {
 
 fail:
     Py_DECREF(m);
-    PyErr_SetString(PyExc_RuntimeError, "Failed to initialize llhttp module");
+    PyErr_SetString(PyExc_RuntimeError, "Failed to initialize pyllhttp module");
     return -1;
 }
 
@@ -539,7 +539,7 @@ static PyModuleDef_Slot llhttp_slots[] = {
 
 static struct PyModuleDef llhttp_module = {
     PyModuleDef_HEAD_INIT,
-    .m_name = "llhttp",
+    .m_name = "pyllhttp",
     .m_doc = "llhttp wrapper",
     .m_slots = llhttp_slots,
     .m_size = 0,
@@ -547,7 +547,7 @@ static struct PyModuleDef llhttp_module = {
 
 
 PyMODINIT_FUNC
-PyInit___llhttp(void) {
+PyInit___pyllhttp(void) {
     return PyModuleDef_Init(&llhttp_module);
 }
 
