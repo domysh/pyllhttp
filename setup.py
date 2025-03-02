@@ -39,5 +39,6 @@ setup(
         #extra_compile_args=["-static-libasan", "-fsanitize=address"],
         #extra_link_args=[ "-static-libasan", "-fsanitize=address"],
     ) ],
+    license_files=["LICENSE"],
 )
 #

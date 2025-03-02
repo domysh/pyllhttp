@@ -1,5 +1,6 @@
 # pyllhttp
 Python wrapper for llhttp
+A fork of llhttp compatible with subinterpreters
 ======
 
 A simple Python wrapper around [llhttp](https://github.com/nodejs/llhttp),
