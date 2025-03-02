@@ -9,27 +9,32 @@
 #define XSTRING(x) STRING(x)
 #define LLHTTP_VERSION XSTRING(LLHTTP_VERSION_MAJOR) "." XSTRING(LLHTTP_VERSION_MINOR) "." XSTRING(LLHTTP_VERSION_PATCH)
 
-typedef struct {
+typedef struct{
     PyObject_HEAD
     llhttp_t llhttp;
-} parser_object;
+} llhttp_obj_t;
 
-static PyObject *base_error;
-static PyObject *errors[] = {
-#define HTTP_ERRNO_GEN(CODE, NAME, _) NULL,
-HTTP_ERRNO_MAP(HTTP_ERRNO_GEN)
-#undef HTTP_ERRNO_GEN
+typedef struct{
+    llhttp_errno_t code;
+    const char *name;
+    const char *pyname;
+    char* module_name;
+} error_info;
+
+static error_info errors[] = {
+    #define HTTP_ERRNO_GEN(CODE, NAME, _) {CODE, #NAME, "llhttp." #NAME "_Error", NULL},
+    HTTP_ERRNO_MAP(HTTP_ERRNO_GEN)
+    #undef HTTP_ERRNO_GEN
 };
 
-static PyObject *methods[] = {
-#define HTTP_METHOD_GEN(NUMBER, NAME, STRING) NULL,
-HTTP_METHOD_MAP(HTTP_METHOD_GEN)
-#undef HTTP_METHOD_GEN
+static const char* methods[] = {
+    #define HTTP_METHOD_GEN(NUMBER, NAME, STRING) #STRING,
+    HTTP_METHOD_MAP(HTTP_METHOD_GEN)
+    #undef HTTP_METHOD_GEN
 };
 
 /* New public callback helper that uses method names as C strings */
-static int
-parser_callback(const char *name, llhttp_t *llhttp) {
+static int parser_callback(const char *name, llhttp_t *llhttp) {
     PyObject *result = PyObject_CallMethod(llhttp->data, name, NULL);
     if (result)
         Py_DECREF(result);
@@ -50,8 +55,7 @@ parser_callback(const char *name, llhttp_t *llhttp) {
     return HPE_OK;
 }
 
-static int
-parser_data_callback(const char *name, llhttp_t *llhttp, const char *data, size_t length) {
+static int parser_data_callback(const char *name, llhttp_t *llhttp, const char *data, size_t length) {
     PyObject *payload = PyMemoryView_FromMemory((char*)data, length, PyBUF_READ);
     if (!payload)
         return HPE_USER;
@@ -119,35 +123,53 @@ llhttp_settings_t parser_settings = {
     .on_chunk_complete = parser_on_chunk_complete,
 };
 
-static PyObject *
-request_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
+static PyObject *request_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
     PyObject *self = type->tp_alloc(type, 0);
     if (self) {
-        llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+        llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
         llhttp_init(llhttp, HTTP_REQUEST, &parser_settings);
         llhttp->data = self;
     }
     return self;
 }
 
-static PyObject *
-response_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
+static PyObject *response_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
     PyObject *self = type->tp_alloc(type, 0);
     if (self) {
-        llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+        llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
         llhttp_init(llhttp, HTTP_RESPONSE, &parser_settings);
         llhttp->data = self;
     }
     return self;
 }
 
-static PyObject *
-parser_execute(PyObject *self, PyObject *payload) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+void set_related_exception(llhttp_errno_t eno, PyObject *exc, llhttp_t *llhttp) {
+    for( size_t i = 0; i < sizeof(errors)/sizeof(errors[0]); ++i) {
+        if (errors[i].code == eno) {
+            PyObject *module = PyImport_ImportModule("llhttp");
+            if (!module) {
+                PyErr_Print();
+                return;
+            }
+            PyObject *obj = PyObject_GetAttrString(module, errors[i].module_name);
+            if (!obj) {
+                PyErr_Print();
+                return;
+            }
+            PyErr_SetString(obj, llhttp_get_error_reason(llhttp));
+            return;
+        }
+    }
+    PyErr_SetString(PyExc_RuntimeError, "Unknown error");
+}
+
+static PyObject *parser_execute(PyObject *self, PyObject *payload) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
 
     Py_buffer buffer;
-    if (PyObject_GetBuffer(payload, &buffer, PyBUF_SIMPLE))
+    if (PyObject_GetBuffer(payload, &buffer, PyBUF_SIMPLE)){
         return NULL;
+    }
 
     if (!PyBuffer_IsContiguous(&buffer, 'C')) {
         PyErr_SetString(PyExc_TypeError, "buffer is not contiguous");
@@ -156,6 +178,7 @@ parser_execute(PyObject *self, PyObject *payload) {
     }
 
     llhttp_errno_t error = llhttp_execute(llhttp, buffer.buf, buffer.len);
+
     PyBuffer_Release(&buffer);
 
     if (PyErr_Occurred())
@@ -164,54 +187,47 @@ parser_execute(PyObject *self, PyObject *payload) {
     switch (error) {
     case HPE_OK:
         return PyLong_FromUnsignedLong(buffer.len);
-
     case HPE_PAUSED:
     case HPE_PAUSED_UPGRADE:
     case HPE_PAUSED_H2_UPGRADE:
         return PyLong_FromUnsignedLong(llhttp->error_pos - (const char*)buffer.buf);
-
     default:
-        PyErr_SetString(errors[error], llhttp_get_error_reason(llhttp));
+        set_related_exception(error, self, llhttp);
         return NULL;
     }
 }
 
-static PyObject *
-parser_pause(PyObject *self) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_pause(PyObject *self) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     llhttp_pause(llhttp);
     Py_RETURN_NONE;
 }
 
-static PyObject *
-parser_unpause(PyObject *self) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_unpause(PyObject *self) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     llhttp_resume(llhttp);
     Py_RETURN_NONE;
 }
 
-static PyObject *
-parser_upgrade(PyObject *self) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_upgrade(PyObject *self) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     llhttp_resume_after_upgrade(llhttp);
     Py_RETURN_NONE;
 }
 
-static PyObject *
-parser_finish(PyObject *self) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_finish(PyObject *self) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
 
     llhttp_errno_t error = llhttp_finish(llhttp);
     if (HPE_OK == error)
         Py_RETURN_NONE;
 
-    PyErr_SetString(errors[error], llhttp_get_error_reason(llhttp));
+    set_related_exception(error, self, llhttp);
     return NULL;
 }
 
-static PyObject *
-parser_reset(PyObject *self) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_reset(PyObject *self) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     llhttp_reset(llhttp);
     Py_RETURN_NONE;
 }
@@ -243,53 +259,45 @@ static PyMethodDef parser_methods[] = {
     { NULL }
 };
 
-static PyObject *
-parser_method(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_method(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     if (llhttp->type != HTTP_REQUEST)
         Py_RETURN_NONE;
     if (!llhttp->http_major && !llhttp->http_minor)
         Py_RETURN_NONE;
 
-    PyObject * method = methods[llhttp->method];
-    Py_INCREF(method);
-    return method;
+    return PyUnicode_FromString(methods[llhttp->method]);
 }
 
-static PyObject *
-parser_major(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_major(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     if (!llhttp->http_major && !llhttp->http_minor)
         Py_RETURN_NONE;
 
     return PyLong_FromUnsignedLong(llhttp->http_major);
 }
 
-static PyObject *
-parser_minor(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_minor(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     if (!llhttp->http_major && !llhttp->http_minor)
         Py_RETURN_NONE;
 
     return PyLong_FromUnsignedLong(llhttp->http_minor);
 }
 
-static PyObject *
-parser_content_length(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_content_length(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     if (!(llhttp->flags & F_CONTENT_LENGTH))
         Py_RETURN_NONE;
 
     return PyLong_FromUnsignedLong(llhttp->content_length);
 }
 
-static bool
-get_lenient(const llhttp_t *llhttp, llhttp_lenient_flags_t flag) {
+static bool get_lenient(const llhttp_t *llhttp, llhttp_lenient_flags_t flag) {
     return llhttp->lenient_flags & flag;
 }
 
-static int
-set_lenient(llhttp_t *llhttp, llhttp_lenient_flags_t flag, bool value) {
+static int set_lenient(llhttp_t *llhttp, llhttp_lenient_flags_t flag, bool value) {
     if (value) {
         llhttp->lenient_flags |= flag;
     } else {
@@ -301,11 +309,11 @@ set_lenient(llhttp_t *llhttp, llhttp_lenient_flags_t flag, bool value) {
 #define LENIENT_FLAG(name) \
 static PyObject * \
 parser_get_lenient_ ## name(PyObject *self, void *closure) \
-    { return PyBool_FromLong(get_lenient(&((parser_object*)self)->llhttp, LENIENT_ ## name)); } \
+    { return PyBool_FromLong(get_lenient(&((llhttp_obj_t*)self)->llhttp, LENIENT_ ## name)); } \
 \
 static int \
 parser_set_lenient_ ## name(PyObject *self, PyObject *value, void *closure) \
-    { return set_lenient(&((parser_object*)self)->llhttp, LENIENT_ ## name, PyObject_IsTrue(value)); }
+    { return set_lenient(&((llhttp_obj_t*)self)->llhttp, LENIENT_ ## name, PyObject_IsTrue(value)); }
 
 LENIENT_FLAG(HEADERS);
 LENIENT_FLAG(CHUNKED_LENGTH);
@@ -313,66 +321,56 @@ LENIENT_FLAG(KEEP_ALIVE);
 LENIENT_FLAG(TRANSFER_ENCODING);
 LENIENT_FLAG(VERSION);
 
-static PyObject *
-parser_get_lenient_headers(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_get_lenient_headers(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     return PyBool_FromLong(llhttp->lenient_flags & LENIENT_HEADERS);
 }
 
-static int
-parser_set_lenient_headers(PyObject *self, PyObject *value, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static int parser_set_lenient_headers(PyObject *self, PyObject *value, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     llhttp_set_lenient_headers(llhttp, PyObject_IsTrue(value));
     return 0;
 }
 
-static PyObject *
-parser_get_lenient_chunked_length(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_get_lenient_chunked_length(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     return PyBool_FromLong(llhttp->lenient_flags & LENIENT_CHUNKED_LENGTH);
 }
 
-static int
-parser_set_lenient_chunked_length(PyObject *self, PyObject *value, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static int parser_set_lenient_chunked_length(PyObject *self, PyObject *value, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     llhttp_set_lenient_chunked_length(llhttp, PyObject_IsTrue(value));
     return 0;
 }
 
-static PyObject *
-parser_get_lenient_keep_alive(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_get_lenient_keep_alive(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     return PyBool_FromLong(llhttp->lenient_flags & LENIENT_KEEP_ALIVE);
 }
 
-static int
-parser_set_lenient_keep_alive(PyObject *self, PyObject *value, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static int parser_set_lenient_keep_alive(PyObject *self, PyObject *value, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     llhttp_set_lenient_keep_alive(llhttp, PyObject_IsTrue(value));
     return 0;
 }
 
-static PyObject *
-parser_message_needs_eof(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_message_needs_eof(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     return PyBool_FromLong(llhttp_message_needs_eof(llhttp));
 }
 
-static PyObject *
-parser_should_keep_alive(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_should_keep_alive(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     return PyBool_FromLong(llhttp_should_keep_alive(llhttp));
 }
 
-static PyObject *
-parser_is_paused(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_is_paused(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     return PyBool_FromLong(HPE_PAUSED == llhttp_get_errno(llhttp));
 }
 
-static PyObject *
-parser_is_upgrading(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_is_upgrading(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     switch (llhttp_get_errno(llhttp)) {
     case HPE_PAUSED_UPGRADE:
     case HPE_PAUSED_H2_UPGRADE:
@@ -384,9 +382,8 @@ parser_is_upgrading(PyObject *self, void *closure) {
     }
 }
 
-static PyObject *
-parser_is_busted(PyObject *self, void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_is_busted(PyObject *self, void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     switch (llhttp_get_errno(llhttp)) {
     case HPE_OK:
     case HPE_PAUSED:
@@ -397,9 +394,8 @@ parser_is_busted(PyObject *self, void *closure) {
     }
 }
 
-static PyObject *
-parser_error(PyObject *self,  void *closure) {
-    llhttp_t *llhttp = &((parser_object*)self)->llhttp;
+static PyObject *parser_error(PyObject *self,  void *closure) {
+    llhttp_t *llhttp = &((llhttp_obj_t*)self)->llhttp;
     if (HPE_OK == llhttp_get_errno(llhttp))
         Py_RETURN_NONE;
     return PyUnicode_FromString(llhttp_get_error_reason(llhttp));
@@ -424,9 +420,9 @@ static PyGetSetDef parser_getset[] = {
     { NULL }
 };
 
-static void
-parser_dealloc(PyObject *self) {
-    Py_TYPE(self)->tp_free((PyObject*)self);
+static void parser_dealloc(PyObject *self) {
+    llhttp_obj_t *llhttp = (llhttp_obj_t*)self;
+    Py_TYPE(self)->tp_free(self);
 }
 
 static PyType_Slot request_slots[] = {
@@ -440,7 +436,7 @@ static PyType_Slot request_slots[] = {
 
 static PyType_Spec request_spec = {
     "llhttp.Request",
-    sizeof(parser_object),
+    sizeof(llhttp_obj_t),
     0,
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     request_slots,
@@ -452,28 +448,25 @@ static PyType_Slot response_slots[] = {
     {Py_tp_dealloc, parser_dealloc},
     {Py_tp_methods, parser_methods},
     {Py_tp_getset, parser_getset},
-    {0, 0},
+    {0, NULL},
 };
 
 static PyType_Spec response_spec = {
     "llhttp.Response",
-    sizeof(parser_object),
-    0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    sizeof(llhttp_obj_t),
+    0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     response_slots,
 };
 
-static struct PyModuleDef llhttp_module = {
-    PyModuleDef_HEAD_INIT,
-    .m_name = "llhttp",
-    .m_doc = "llhttp wrapper",
-    .m_size = -1,
-};
-
-static char *
-snake_to_camel(char * string) {
+static void snake_to_camel(error_info * err_obj) {
+    if (err_obj->module_name) {
+        return;
+    }
+    err_obj->module_name = malloc(strlen(err_obj->pyname)+1);
     bool upper = true;
-    char * camel = string;
+    char * string = err_obj->pyname+strlen("llhttp.");
+    memcpy(err_obj->module_name, "llhttp.", strlen("llhttp."));
+    char * camel = err_obj->module_name+strlen("llhttp.");
     for (const char * snake = string ; *snake ; ++snake) {
         if (isalpha(*snake)) {
             *camel++ = upper ? toupper(*snake) : tolower(*snake);
@@ -483,40 +476,33 @@ snake_to_camel(char * string) {
         upper = !isalpha(*snake);
     }
     *camel = '\0';
-    return string;
 }
 
-PyMODINIT_FUNC
-PyInit___llhttp(void) {
-    PyObject *m = PyModule_Create(&llhttp_module);
-    if (!m)
-        return NULL;
+static int init_llhttp_module(PyObject *m) {
 
     if (PyModule_AddStringConstant(m, "version", LLHTTP_VERSION))
         goto fail;
-
+    
+    PyObject *base_error = NULL;
     if ((base_error = PyErr_NewException("llhttp.Error", NULL, NULL))) {
         Py_INCREF(base_error);
         PyModule_AddObject(m, "Error", base_error);
-
-#define HTTP_ERRNO_GEN(CODE, NAME, _) \
-        if (CODE != HPE_OK && CODE != HPE_PAUSED && CODE != HPE_PAUSED_UPGRADE) { \
-            char long_name[] = "llhttp." #NAME "_Error"; \
-            char *short_name = snake_to_camel(long_name + strlen("llhttp.")); \
-            if ((errors[CODE] = PyErr_NewException(long_name, base_error, NULL))) { \
-                Py_INCREF(errors[CODE]); \
-                PyModule_AddObject(m, short_name, errors[CODE]); \
-            } \
+    
+        for (size_t i=0; i< sizeof(errors)/sizeof(errors[0]); ++i) {
+            //A way to avoid using global exceptions (to support multiple interpreters)
+            snake_to_camel(&errors[i]);
+            PyObject *exc_object = PyErr_NewException(errors[i].module_name, base_error, NULL);
+            if (exc_object) {
+                if (PyModule_AddObject(m, errors[i].module_name, exc_object)){
+                    Py_DECREF(exc_object);
+                    goto fail;
+                }
+            }else{
+                goto fail;
+            }
         }
-HTTP_ERRNO_MAP(HTTP_ERRNO_GEN)
-#undef HTTP_ERRNO_GEN
 
     }
-
-#define HTTP_METHOD_GEN(NUMBER, NAME, STRING) \
-    methods[HTTP_ ## NAME] = PyUnicode_FromStringAndSize(#STRING, strlen(#STRING));
-HTTP_METHOD_MAP(HTTP_METHOD_GEN)
-#undef HTTP_METHOD_GEN
 
     PyObject *request_type = PyType_FromSpec(&request_spec);
     if (!request_type)
@@ -536,10 +522,34 @@ HTTP_METHOD_MAP(HTTP_METHOD_GEN)
         goto fail;
     }
 
-    return m;
+    return 0;
 
 fail:
     Py_DECREF(m);
-    return NULL;
+    PyErr_SetString(PyExc_RuntimeError, "Failed to initialize llhttp module");
+    return -1;
 }
+
+
+static PyModuleDef_Slot llhttp_slots[] = {
+    {Py_mod_exec, init_llhttp_module},
+    {Py_mod_multiple_interpreters, Py_MOD_PER_INTERPRETER_GIL_SUPPORTED},
+    {0, NULL}
+};
+
+static struct PyModuleDef llhttp_module = {
+    PyModuleDef_HEAD_INIT,
+    .m_name = "llhttp",
+    .m_doc = "llhttp wrapper",
+    .m_slots = llhttp_slots,
+    .m_size = 0,
+};
+
+
+PyMODINIT_FUNC
+PyInit___llhttp(void) {
+    return PyModuleDef_Init(&llhttp_module);
+}
+
+
 

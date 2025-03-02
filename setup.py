@@ -7,7 +7,7 @@ with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name = 'llhttp',
-    version = '6.0.9.0',
+    version = '6.7.0',
     description = ("llhttp in python"),
     url = "http://github.com/pallas/pyllhttp",
     author = "Derrick Lyndon Pallas",
@@ -15,7 +15,7 @@ setup(
     license = "MIT",
     long_description = long_description,
     long_description_content_type = "text/markdown",
-    keywords = "www http parser",
+    keywords = "http parser",
     classifiers = [
         "Development Status :: 4 - Beta",
         "Programming Language :: Python :: 3 :: Only",
@@ -26,7 +26,7 @@ setup(
         "License :: OSI Approved :: MIT License",
     ],
     packages = [ "llhttp" ],
-    headers = [ "lib/llhttp.h" ],
+    headers = [ "lib/llhttp.h", "lib/api.h" ],
     ext_modules = [ Extension('__llhttp',
         sources = """
             pyllhttp.c
@@ -35,6 +35,9 @@ setup(
             lib/api.c
         """.split(),
         language = "c",
+        extra_compile_args=["-O3"],
+        #extra_compile_args=["-static-libasan", "-fsanitize=address"],
+        #extra_link_args=[ "-static-libasan", "-fsanitize=address"],
     ) ],
 )
 #
