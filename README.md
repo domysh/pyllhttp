@@ -1,6 +1,9 @@
 # pyllhttp
-Python wrapper for llhttp
-A fork of llhttp compatible with subinterpreters
+
+### Python wrapper for llhttp
+
+### A fork of llhttp compatible with subinterpreters
+
 ======
 
 A simple Python wrapper around [llhttp](https://github.com/nodejs/llhttp),
@@ -8,7 +11,7 @@ the HTTP parser for [Node.js](https://nodejs.org/).
 
 ## Install
 
-[llhttp](https://pypi.org/project/llhttp/) via PyPI, or `pip install llhttp`
+[pyllhttp](https://pypi.org/project/pyllhttp/) via PyPI, or `pip install pyllhttp`
 
 ## Usage
 
