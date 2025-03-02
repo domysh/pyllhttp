@@ -143,7 +143,7 @@ static PyObject *response_new(PyTypeObject *type, PyObject *args, PyObject *kwds
     return self;
 }
 
-void set_related_exception(llhttp_errno_t eno, PyObject *exc, llhttp_t *llhttp) {
+void set_related_exception(llhttp_errno_t eno, llhttp_t *llhttp) {
     for( size_t i = 0; i < sizeof(errors)/sizeof(errors[0]); ++i) {
         if (errors[i].code == eno) {
             PyObject *module = PyImport_ImportModule("llhttp");
@@ -192,7 +192,7 @@ static PyObject *parser_execute(PyObject *self, PyObject *payload) {
     case HPE_PAUSED_H2_UPGRADE:
         return PyLong_FromUnsignedLong(llhttp->error_pos - (const char*)buffer.buf);
     default:
-        set_related_exception(error, self, llhttp);
+        set_related_exception(error, llhttp);
         return NULL;
     }
 }
@@ -222,7 +222,7 @@ static PyObject *parser_finish(PyObject *self) {
     if (HPE_OK == error)
         Py_RETURN_NONE;
 
-    set_related_exception(error, self, llhttp);
+    set_related_exception(error, llhttp);
     return NULL;
 }
 
