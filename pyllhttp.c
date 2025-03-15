@@ -152,11 +152,14 @@ void set_related_exception(llhttp_errno_t eno, llhttp_t *llhttp) {
                 return;
             }
             PyObject *obj = PyObject_GetAttrString(module, errors[i].module_name);
+            Py_DECREF(module);
             if (!obj) {
                 PyErr_Print();
                 return;
             }
+            
             PyErr_SetString(obj, llhttp_get_error_reason(llhttp));
+            Py_DECREF(obj);
             return;
         }
     }
