@@ -151,7 +151,7 @@ void set_related_exception(llhttp_errno_t eno, llhttp_t *llhttp) {
                 PyErr_Print();
                 return;
             }
-            PyObject *obj = PyObject_GetAttrString(module, errors[i].module_name);
+            PyObject *obj = PyObject_GetAttrString(module, errors[i].module_name+strlen("pyllhttp."));
             Py_DECREF(module);
             if (!obj) {
                 PyErr_Print();
@@ -189,11 +189,11 @@ static PyObject *parser_execute(PyObject *self, PyObject *payload) {
 
     switch (error) {
     case HPE_OK:
-        return PyLong_FromUnsignedLong(buffer.len);
+        return Py_BuildValue("(nn)", error, buffer.len);
     case HPE_PAUSED:
     case HPE_PAUSED_UPGRADE:
     case HPE_PAUSED_H2_UPGRADE:
-        return PyLong_FromUnsignedLong(llhttp->error_pos - (const char*)buffer.buf);
+        return Py_BuildValue("(nn)", error, llhttp->error_pos - (const char*)buffer.buf);
     default:
         set_related_exception(error, llhttp);
         return NULL;
@@ -486,6 +486,20 @@ static int init_llhttp_module(PyObject *m) {
     if (PyModule_AddStringConstant(m, "version", LLHTTP_VERSION))
         goto fail;
     
+
+    for (size_t i=0; i< sizeof(errors)/sizeof(errors[0]); ++i) {
+        PyObject* num_type = PyLong_FromLong(errors[i].code);
+        if (num_type) {
+            if (PyModule_AddObject(m, errors[i].name, num_type)) {
+                Py_DECREF(num_type);
+                goto fail;
+            }
+            Py_DECREF(num_type);
+        }else{
+            goto fail;
+        }
+    }
+
     PyObject *base_error = NULL;
     if ((base_error = PyErr_NewException("pyllhttp.Error", NULL, NULL))) {
         Py_INCREF(base_error);
@@ -496,7 +510,7 @@ static int init_llhttp_module(PyObject *m) {
             snake_to_camel(&errors[i]);
             PyObject *exc_object = PyErr_NewException(errors[i].module_name, base_error, NULL);
             if (exc_object) {
-                if (PyModule_AddObject(m, errors[i].module_name, exc_object)){
+                if (PyModule_AddObject(m, errors[i].module_name+strlen("pyllhttp."), exc_object)){
                     Py_DECREF(exc_object);
                     goto fail;
                 }
