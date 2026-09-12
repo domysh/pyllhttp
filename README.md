@@ -1,5 +1,7 @@
 # pyllhttp
 
+> No more supported! Migrate to [httptools](https://github.com/MagicStack/httptools)
+
 ### Python wrapper for llhttp
 
 ### A fork of llhttp compatible with subinterpreters
